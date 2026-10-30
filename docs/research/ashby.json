@@ -1,0 +1,3 @@
+{"n":456,"nMidEntry":289,"byLevel":{"entry":9,"mid/unspecified":280,"senior":70,"staff+":97},"byRegion":{"DE":14,"IE":3,"IN":6,"NL":2,"OTHER":111,"PL":6,"US":314},
+"themes":{"agents":247,"cost_optimization":222,"data_eng":97,"distributed_systems":246,"evals":311,"gpu_kernels":123,"inference_serving":228,"kubernetes":74,"llm_genai":228,"mlops_pipelines":73,"observability":212,"python":293,"rag_retrieval":107,"safety_security":229,"training_finetune":103,"visa":47},
+"themesMidEntry":{"agents":154,"cost_optimization":143,"data_eng":62,"distributed_systems":139,"evals":193,"gpu_kernels":77,"inference_serving":137,"kubernetes":37,"llm_genai":146,"mlops_pipelines":37,"observability":114,"python":195,"rag_retrieval":70,"safety_security":172,"training_finetune":70,"visa":16}}
