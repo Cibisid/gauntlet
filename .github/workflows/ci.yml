@@ -64,6 +64,9 @@ jobs:
 
   security:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read  # gitleaks lists the PR's commits
     steps:
       - uses: actions/checkout@v4
         with:
@@ -101,7 +104,7 @@ jobs:
           docker compose up --abort-on-container-exit --exit-code-from gate
           test -s out/gate-report.md
       - name: Container scan (Trivy)
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.35.0  # immutable release tag
         with:
           image-ref: gauntlet:ci
           severity: CRITICAL,HIGH
