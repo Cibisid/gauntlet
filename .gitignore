@@ -13,3 +13,4 @@ sbom.cdx.json
 .env
 *.tfstate*
 .terraform/
+out/

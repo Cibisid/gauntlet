@@ -1,5 +1,10 @@
 # 14-Week Plan
 
+**Progress:**
+- Week 1 done (2026-10-30).
+- Week 2 done (2026-10-31): case schema, runner, gate CLI, mock model, synthetic suite, Docker stack, CI release gate.
+- The week 2 local stack shipped as Docker Compose. kind (Kubernetes) moves to week 10 with the canary controller. ADR-0003 (EKS vs k3s) is still open, decided by week 6.
+
 Each milestone ends with something demonstrable and a short entry in `CHANGELOG.md`. Numbers go in the README only after they are measured.
 
 | Week | Deliverable | Done when |

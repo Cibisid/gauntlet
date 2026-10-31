@@ -1,0 +1,34 @@
+# Local stack: `docker compose up --build` starts the mock model server, then
+# runs the baseline and candidate releases and gates the candidate.
+# Results and the gate report land in ./out.
+
+services:
+  mock-llm:
+    build: .
+    image: gauntlet:dev
+    environment:
+      MOCK_LATENCY_SCALE: "1"
+    ports:
+      - "127.0.0.1:8089:8089"
+    read_only: true
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
+
+  gate:
+    image: gauntlet:dev
+    depends_on:
+      mock-llm:
+        condition: service_healthy
+    entrypoint: ["sh", "-c"]
+    command:
+      - >
+        gauntlet run --release releases/trialbridge/baseline.yaml --cases cases/trialbridge/synthetic_v1.jsonl
+        --base-url http://mock-llm:8089/v1 --out /out/baseline.jsonl &&
+        gauntlet run --release releases/trialbridge/candidate.yaml --cases cases/trialbridge/synthetic_v1.jsonl
+        --base-url http://mock-llm:8089/v1 --out /out/candidate.jsonl &&
+        gauntlet gate --baseline /out/baseline.jsonl --candidate /out/candidate.jsonl
+        --release releases/trialbridge/candidate.yaml --report /out/gate-report.md
+    volumes:
+      - ./out:/out
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: ["ALL"]
