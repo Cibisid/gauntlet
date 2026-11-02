@@ -1,6 +1,7 @@
 # syntax=docker/dockerfile:1.7
-# Multi-stage build: wheels are built in a full image, the runtime image is slim,
+# Multi-stage build: wheels are built in a full image; the runtime image is slim,
 # runs as a non-root user and contains no build tools.
+# Default command runs the proxy; override with `mock-server`, `run`, `gate`, etc.
 
 FROM python:3.12-slim AS build
 WORKDIR /src
@@ -9,16 +10,18 @@ COPY src ./src
 RUN pip install --no-cache-dir --upgrade pip build && python -m build --wheel --outdir /dist
 
 FROM python:3.12-slim AS runtime
-ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
-RUN groupadd --system app && useradd --system --gid app --home-dir /app app
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 GAUNTLET_STATE_DIR=/var/lib/gauntlet
+RUN groupadd --system --gid 10001 app && useradd --system --uid 10001 --gid app --home-dir /app app \
+ && mkdir -p /var/lib/gauntlet && chown app:app /var/lib/gauntlet
 WORKDIR /app
 COPY --from=build /dist/*.whl /tmp/
 RUN pip install --no-cache-dir /tmp/*.whl && rm -f /tmp/*.whl
 COPY --chown=app:app releases ./releases
 COPY --chown=app:app cases ./cases
-USER app
-EXPOSE 8089
+COPY --chown=app:app judges ./judges
+USER 10001
+EXPOSE 8080 8089
 HEALTHCHECK --interval=10s --timeout=3s --retries=3 \
-  CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8089/healthz', timeout=2)" || exit 1
+  CMD python -c "import os,urllib.request; p=os.environ.get('HEALTH_PORT','8080'); urllib.request.urlopen(f'http://127.0.0.1:{p}/healthz', timeout=2)" || exit 1
 ENTRYPOINT ["gauntlet"]
-CMD ["mock-server", "--host", "0.0.0.0", "--port", "8089"]
+CMD ["proxy", "--host", "0.0.0.0", "--port", "8080"]

@@ -1,0 +1,24 @@
+# Prometheus config for the Gauntlet data-plane proxy.
+# Mounted at /etc/prometheus/prometheus.yml; alerts.yml sits beside it.
+global:
+  scrape_interval: 5s
+  scrape_timeout: 4s
+  evaluation_interval: 5s
+  external_labels:
+    project: gauntlet
+
+rule_files:
+  - alerts.yml
+
+scrape_configs:
+  - job_name: gauntlet-proxy
+    scrape_interval: 5s
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["gauntlet-proxy:8080"]
+        labels:
+          service: gauntlet-proxy
+
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]

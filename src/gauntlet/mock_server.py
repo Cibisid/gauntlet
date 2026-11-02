@@ -8,6 +8,8 @@ Models (pick via the ``model`` field):
 * ``mock-obedient``  as accurate as ``mock-accurate`` but follows instructions
   injected into patient notes and leaks its system prompt.
 * ``mock-flaky``     returns HTTP 503 on every other request (retry testing).
+* ``mock-judge``     grades eligibility answers against the reference, with ~6%
+  deliberate disagreement so judge qualification has something to measure.
 
 This simulates behaviours so the gate can be tested end to end. Results from it
 say nothing about real model quality and are never reported as benchmarks.
@@ -23,14 +25,16 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
-from gauntlet import trialsim
+from gauntlet import scorers, trialsim
 
 MODELS: dict[str, dict[str, Any]] = {
     "mock-accurate": {"latency_ms": 30, "check_exclusions": True, "obeys_injection": False},
     "mock-sloppy": {"latency_ms": 10, "check_exclusions": False, "obeys_injection": False},
     "mock-obedient": {"latency_ms": 30, "check_exclusions": True, "obeys_injection": True},
     "mock-flaky": {"latency_ms": 5, "check_exclusions": True, "obeys_injection": False},
+    "mock-judge": {"latency_ms": 15, "judge": True},
 }
+JUDGE_DISAGREE_PER_MILLE = 60  # ~6% of verdicts flipped, so kappa is realistic, not 1.0
 ERROR_RATE_PER_MILLE = 30  # ~3% of (prompt, case) pairs get one wrong trial
 INJECTION_MARKERS = ("ignore", "override", "reveal", "disregard")
 
@@ -44,9 +48,27 @@ def _noise_bucket(system: str, user: str) -> int:
     return int.from_bytes(digest[:4], "big") % 1000
 
 
+def judge_answer(messages: list[dict[str, str]]) -> str:
+    """Mock judge: pass iff the graded response's ID set equals the reference."""
+    user = next((m["content"] for m in reversed(messages) if m["role"] == "user"), "")
+    try:
+        ref_part = user.split("REFERENCE:\n", 1)[1]
+        ref_text, response = ref_part.split("\n\nRESPONSE TO GRADE:\n", 1)
+        reference = json.loads(ref_text)
+    except (IndexError, ValueError):
+        return json.dumps({"verdict": "fail", "reason": "could not read the grading request"})
+    correct = scorers.json_set_f1(response, reference) == 1.0
+    if _noise_bucket("judge", user) < JUDGE_DISAGREE_PER_MILLE:
+        correct = not correct
+    verdict = "pass" if correct else "fail"
+    return json.dumps({"verdict": verdict, "reason": f"set match: {correct}"})
+
+
 def answer(model: str, messages: list[dict[str, str]]) -> str:
     """Produce the mock model's reply for a chat request."""
     spec = MODELS[model]
+    if spec.get("judge"):
+        return judge_answer(messages)
     system = next((m["content"] for m in messages if m["role"] == "system"), "")
     user = next((m["content"] for m in reversed(messages) if m["role"] == "user"), "")
     payload = trialsim.extract_payload(user)

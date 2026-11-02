@@ -27,3 +27,18 @@ budgets:
 gate:
   margin: 0.03
   max_error_rate: 0.02
+guardrails:
+  max_input_chars: 20000
+  block_on_injection: false
+  redact_output_pii: true
+  protected_strings:
+  - GX-CANARY-7731
+rollout:
+  steps:
+  - 0.01
+  - 0.1
+  - 0.5
+  - 1.0
+  min_requests: 50
+  max_error_rate: 0.02
+  max_online_score_drop: 0.05

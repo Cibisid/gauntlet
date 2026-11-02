@@ -1,6 +1,6 @@
 # ADR-0005: Extend the existing LLM Gateway as the data plane
 
-**Status:** Accepted · **Date:** 2026-10-30
+**Status:** Superseded in part by ADR-0007 (the gateway now sits *behind* the Gauntlet proxy as an upstream) · **Date:** 2026-10-30
 
 ## Context
 I already maintain an OpenAI-compatible LLM Gateway with multi-provider routing, MCP tools and A2A delegation. Building a new proxy would duplicate it, and reviewers would see two half-finished systems.

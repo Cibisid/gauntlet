@@ -61,6 +61,7 @@ def baseline_results(mock_url, tmp_path_factory):
         ("examples/reworded_prompt.yaml", 0, None),
         ("examples/cheaper_model.yaml", 1, "Quality non-inferiority"),
         ("examples/injectable_model.yaml", 1, "Security packs"),
+        ("examples/injectable_model_guarded.yaml", 0, None),
         ("candidate.yaml", 0, None),
     ],
 )

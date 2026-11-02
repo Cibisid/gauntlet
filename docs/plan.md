@@ -1,5 +1,7 @@
 # 14-Week Plan
 
+**Status (2026-11-02): every software milestone in this plan is built and tested (v1.0).** The plan was compressed from 14 weeks to 4 days. What remains needs things outside the repo: human labels, a model API key, a GPU window, and an AWS account. See README → Not done yet.
+
 **Progress:**
 - Week 1 done (2026-10-30).
 - Week 2 done (2026-10-31): case schema, runner, gate CLI, mock model, synthetic suite, Docker stack, CI release gate.

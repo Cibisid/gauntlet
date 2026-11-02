@@ -1,0 +1,51 @@
+# Deterministic mock model (tests and demos). Replace with vLLM via deploy/k8s/gpu.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mock-llm
+  namespace: gauntlet
+  labels: {app.kubernetes.io/name: mock-llm, app.kubernetes.io/part-of: gauntlet}
+  annotations:
+    checkov.io/skip1: CKV_K8S_43=Local/kind image; digests are pinned when images are promoted to ECR
+    checkov.io/skip2: CKV_K8S_15=IfNotPresent required for kind-loaded images
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app.kubernetes.io/name: mock-llm}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: mock-llm, app.kubernetes.io/part-of: gauntlet}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: mock
+          image: gauntlet:dev
+          imagePullPolicy: IfNotPresent
+          args: ["mock-server", "--host", "0.0.0.0", "--port", "8089"]
+          env: [{name: MOCK_LATENCY_SCALE, value: "1"}]
+          ports: [{name: http, containerPort: 8089}]
+          readinessProbe:
+            httpGet: {path: /healthz, port: http}
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 10
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {cpu: 500m, memory: 256Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: ["ALL"]}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mock-llm
+  namespace: gauntlet
+spec:
+  selector: {app.kubernetes.io/name: mock-llm}
+  ports: [{name: http, port: 8089, targetPort: http}]

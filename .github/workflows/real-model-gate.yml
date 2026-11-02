@@ -1,0 +1,72 @@
+name: real-model-gate
+
+# Manually triggered: runs the gate against a REAL model behind any
+# OpenAI-compatible endpoint (hosted API, LLM Gateway, or vLLM).
+# Setup once: Settings -> Secrets and variables -> Actions:
+#   GAUNTLET_REAL_BASE_URL  e.g. https://<your-gateway>/v1
+#   GAUNTLET_API_KEY        the provider/gateway key (never printed)
+on:
+  workflow_dispatch:
+    inputs:
+      baseline_model:
+        description: "Model name for the baseline release"
+        required: true
+      candidate_model:
+        description: "Model name for the candidate release"
+        required: true
+      price_in_per_mtok:
+        description: "Candidate input price (USD per 1M tokens)"
+        default: "0"
+      price_out_per_mtok:
+        description: "Candidate output price (USD per 1M tokens)"
+        default: "0"
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    environment: real-models
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e .
+      - name: Build releases for the chosen models
+        env:
+          BASE_MODEL: ${{ inputs.baseline_model }}
+          CAND_MODEL: ${{ inputs.candidate_model }}
+          PIN: ${{ inputs.price_in_per_mtok }}
+          POUT: ${{ inputs.price_out_per_mtok }}
+        run: |
+          python - <<'PY'
+          import os, yaml
+          base = yaml.safe_load(open("releases/trialbridge/baseline.yaml"))
+          base["model"] = {"name": os.environ["BASE_MODEL"]}
+          cand = yaml.safe_load(open("releases/trialbridge/candidate.yaml"))
+          cand["model"] = {"name": os.environ["CAND_MODEL"],
+                           "price_in_per_mtok": float(os.environ["PIN"]),
+                           "price_out_per_mtok": float(os.environ["POUT"])}
+          yaml.safe_dump(base, open("/tmp/base.yaml", "w"))
+          yaml.safe_dump(cand, open("/tmp/cand.yaml", "w"))
+          PY
+      - name: Run and gate
+        env:
+          GAUNTLET_API_KEY: ${{ secrets.GAUNTLET_API_KEY }}
+          URL: ${{ secrets.GAUNTLET_REAL_BASE_URL }}
+        run: |
+          mkdir -p out
+          gauntlet run --release /tmp/base.yaml --cases cases/trialbridge/synthetic_v1.jsonl --base-url "$URL" --out out/baseline.jsonl --concurrency 4
+          gauntlet run --release /tmp/cand.yaml --cases cases/trialbridge/synthetic_v1.jsonl --base-url "$URL" --out out/candidate.jsonl --concurrency 4
+          set +e
+          gauntlet gate --baseline out/baseline.jsonl --candidate out/candidate.jsonl --release /tmp/cand.yaml --report out/gate-report.md
+          status=$?
+          cat out/gate-report.md >> "$GITHUB_STEP_SUMMARY"
+          exit $status
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: real-model-gate
+          path: out/

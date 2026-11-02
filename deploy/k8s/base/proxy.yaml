@@ -1,0 +1,79 @@
+# Data-plane proxy. replicas: 1 on purpose: routing state lives in the pod
+# (see ADR-0007). HA needs that state moved to a shared store first.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gauntlet-proxy
+  namespace: gauntlet
+  labels: {app.kubernetes.io/name: gauntlet-proxy, app.kubernetes.io/part-of: gauntlet}
+  annotations:
+    checkov.io/skip1: CKV_K8S_43=Local/kind image; digests are pinned when images are promoted to ECR
+    checkov.io/skip2: CKV_K8S_15=IfNotPresent required for kind-loaded images
+    checkov.io/skip3: CKV_K8S_35=Only scrypt hashes and an optional upstream key; app reads config from env
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app.kubernetes.io/name: gauntlet-proxy}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: gauntlet-proxy, app.kubernetes.io/part-of: gauntlet}
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: /metrics
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: proxy
+          image: gauntlet:dev
+          imagePullPolicy: IfNotPresent
+          args: ["proxy", "--host", "0.0.0.0", "--port", "8080"]
+          ports: [{name: http, containerPort: 8080}]
+          env:
+            - {name: GAUNTLET_UPSTREAM, value: "http://mock-llm:8089/v1"}
+            - {name: GAUNTLET_STATE_DIR, value: /var/lib/gauntlet}
+            - {name: GAUNTLET_RATE_LIMIT_RPM, value: "600"}
+            - {name: GAUNTLET_TRACE_SAMPLE, value: "0.2"}
+            - name: GAUNTLET_ADMIN_KEY_HASH
+              valueFrom: {secretKeyRef: {name: gauntlet-keys, key: admin_key_hash}}
+            - name: GAUNTLET_API_KEY_HASHES
+              valueFrom: {secretKeyRef: {name: gauntlet-keys, key: api_key_hashes}}
+            - name: GAUNTLET_UPSTREAM_API_KEY
+              valueFrom: {secretKeyRef: {name: gauntlet-keys, key: upstream_api_key, optional: true}}
+          readinessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 10
+            failureThreshold: 3
+          resources:
+            requests: {cpu: 100m, memory: 128Mi}
+            limits: {cpu: "1", memory: 512Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: ["ALL"]}
+          volumeMounts:
+            - {name: state, mountPath: /var/lib/gauntlet}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - {name: state, emptyDir: {}}
+        - {name: tmp, emptyDir: {}}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gauntlet-proxy
+  namespace: gauntlet
+  labels: {app.kubernetes.io/name: gauntlet-proxy}
+spec:
+  selector: {app.kubernetes.io/name: gauntlet-proxy}
+  ports: [{name: http, port: 8080, targetPort: http}]

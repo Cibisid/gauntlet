@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.0.0 — 2026-11-02
+- **LLM judges.** Versioned rubrics; qualification against human labels (κ, fail precision/recall, n); refuse to gate with an unqualified or changed judge (ADR-0002).
+- **Labelling.** Interactive `gauntlet label` with stratified sampling and resume support; `gauntlet agreement` for inter-annotator κ.
+- **Guardrails.** Protected-string output blocking, PII redaction (email, phone, SSN, Luhn-checked cards) and the input injection detector. The full guardrail policy is applied in the runner, so the gate tests the guarded system.
+- **Honest guardrail finding.** The detector caught 0/20 held-out attacks, so enforcement moved to the output side (ADR-0008).
+- **Proxy.** FastAPI data plane: stable/canary routing, scrypt keys, rate limits, body limits, security headers, Prometheus metrics, sampled PII-redacted traces, feedback, hash-chained audit log, admin API (ADR-0007).
+- **Rollout controller.** Advance/hold/promote/rollback on error rate, p95, guardrail leaks and online score; `gauntlet rollout` commands.
+- **Monitoring.** PSI drift, triage of flagged traces into candidate cases, Grafana dashboard, 7 Prometheus alerts and runbooks.
+- **Benchmarking.** `gauntlet bench`; proxy overhead ≤ 1 ms for 99.7% of requests (benchmarks/).
+- **Deploy.** Hardened Kubernetes manifests (restricted PSS, NetworkPolicies), vLLM GPU manifest, Terraform for AWS (k3s on EC2, optional GPU spot, ECR, S3, Secrets Manager, GitHub OIDC, budgets).
+- **CI.** kind-cluster canary end-to-end, OWASP ZAP baseline, terraform fmt/validate, checkov; manual `real-model-gate` workflow.
+
+
 ## 0.2.0 — 2026-10-31 (week 2)
 - Case schema with quality/security suites and dev/holdout splits; tamper-evident case-set hash.
 - Prompt rendering with `string.Template`, so user data cannot inject format directives.

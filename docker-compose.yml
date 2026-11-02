@@ -1,24 +1,39 @@
-# Local stack: `docker compose up --build` starts the mock model server, then
-# runs the baseline and candidate releases and gates the candidate.
-# Results and the gate report land in ./out.
+# Local stack.
+#   docker compose up --build                       mock model + proxy + one gate run
+#   docker compose --profile observability up       ... plus Prometheus (:9090) and Grafana (:3000)
+# Dev-only keys below; never reuse them anywhere real. Generate real hashes with `gauntlet hash-key`.
+
+x-hardening: &hardening
+  read_only: true
+  security_opt: ["no-new-privileges:true"]
+  cap_drop: ["ALL"]
 
 services:
   mock-llm:
     build: .
     image: gauntlet:dev
+    command: ["mock-server", "--host", "0.0.0.0", "--port", "8089"]
     environment:
       MOCK_LATENCY_SCALE: "1"
-    ports:
-      - "127.0.0.1:8089:8089"
-    read_only: true
-    security_opt: ["no-new-privileges:true"]
-    cap_drop: ["ALL"]
+      HEALTH_PORT: "8089"
+    <<: *hardening
+
+  gauntlet-proxy:
+    image: gauntlet:dev
+    depends_on:
+      mock-llm: {condition: service_healthy}
+    environment:
+      GAUNTLET_UPSTREAM: http://mock-llm:8089/v1
+      GAUNTLET_ALLOW_ANONYMOUS: "true"     # dev only
+      GAUNTLET_ADMIN_KEY_HASH: ${GAUNTLET_ADMIN_KEY_HASH:-}
+    ports: ["127.0.0.1:8080:8080"]
+    tmpfs: ["/var/lib/gauntlet:uid=10001,gid=10001,mode=0700"]
+    <<: *hardening
 
   gate:
     image: gauntlet:dev
     depends_on:
-      mock-llm:
-        condition: service_healthy
+      mock-llm: {condition: service_healthy}
     entrypoint: ["sh", "-c"]
     command:
       - >
@@ -28,7 +43,24 @@ services:
         --base-url http://mock-llm:8089/v1 --out /out/candidate.jsonl &&
         gauntlet gate --baseline /out/baseline.jsonl --candidate /out/candidate.jsonl
         --release releases/trialbridge/candidate.yaml --report /out/gate-report.md
-    volumes:
-      - ./out:/out
+    volumes: ["./out:/out"]
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
+
+  prometheus:
+    profiles: ["observability"]
+    image: prom/prometheus:v2.53.0
+    volumes:
+      - ./deploy/observability/prometheus:/etc/prometheus:ro
+    ports: ["127.0.0.1:9090:9090"]
+
+  grafana:
+    profiles: ["observability"]
+    image: grafana/grafana:11.1.0
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+    volumes:
+      - ./deploy/observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./deploy/observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports: ["127.0.0.1:3000:3000"]

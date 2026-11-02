@@ -1,0 +1,71 @@
+# vLLM serving an open-weight model on one NVIDIA GPU (OpenAI-compatible API).
+# Point the proxy at it with GAUNTLET_UPSTREAM=http://vllm:8000/v1 and set the
+# release's model.name to the served model. Not exercised in CI (needs a GPU).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vllm
+  namespace: gauntlet
+  labels: {app.kubernetes.io/name: vllm, app.kubernetes.io/part-of: gauntlet}
+  annotations:
+    checkov.io/skip1: CKV_K8S_43=Local/kind image; digests are pinned when images are promoted to ECR
+    checkov.io/skip2: CKV_K8S_15=IfNotPresent required for kind-loaded images
+    checkov.io/skip3: CKV_K8S_35=vLLM reads VLLM_API_KEY from env only
+    checkov.io/skip4: CKV_K8S_22=vLLM writes compile and model caches under several paths
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app.kubernetes.io/name: vllm}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: vllm, app.kubernetes.io/part-of: gauntlet}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile: {type: RuntimeDefault}
+      volumes:
+        - {name: cache, emptyDir: {}}
+        - {name: shm, emptyDir: {medium: Memory, sizeLimit: 4Gi}}
+      containers:
+        - name: vllm
+          image: vllm/vllm-openai:v0.6.6  # bump to a current release before use
+          args:
+            - --model=Qwen/Qwen2.5-7B-Instruct-AWQ
+            - --quantization=awq
+            - --max-model-len=8192
+            - --gpu-memory-utilization=0.90
+            - --enable-prefix-caching
+          ports: [{name: http, containerPort: 8000}]
+          env:
+            - {name: HOME, value: /cache}
+            - {name: HF_HOME, value: /cache/hf}
+            - name: VLLM_API_KEY
+              valueFrom: {secretKeyRef: {name: gauntlet-keys, key: upstream_api_key}}
+          readinessProbe:
+            httpGet: {path: /health, port: http}
+            initialDelaySeconds: 60
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /health, port: http}
+            initialDelaySeconds: 300
+            periodSeconds: 20
+          volumeMounts:
+            - {name: cache, mountPath: /cache}
+            - {name: shm, mountPath: /dev/shm}
+          resources:
+            limits: {nvidia.com/gpu: 1, memory: 24Gi, cpu: "4"}
+            requests: {cpu: "2", memory: 16Gi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: ["ALL"]}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: vllm, namespace: gauntlet}
+spec:
+  selector: {app.kubernetes.io/name: vllm}
+  ports: [{name: http, port: 8000, targetPort: http}]

@@ -2,84 +2,92 @@
 
 [![ci](https://github.com/Cibisid/gauntlet/actions/workflows/ci.yml/badge.svg)](https://github.com/Cibisid/gauntlet/actions/workflows/ci.yml)
 
-**Eval-gated releases for LLM and agent systems.** A prompt, model, tool or routing change reaches users only if it passes four checks:
+**Eval-gated releases for LLM and agent systems.** Gauntlet treats prompts, models and guardrails like code. Every change is versioned and tested offline against a held-out case set, security packs and budgets. It then ships through a canary that rolls itself back when live traffic shows a problem.
 
-- **Not worse than production.** A paired non-inferiority test on a held-out case set.
-- **Survives the security packs.** Prompt injection and system-prompt leakage tests, mapped to the OWASP LLM Top 10.
-- **Low provider error rate.**
-- **Inside latency and cost budgets.**
+```
+ PR changes a release ──► offline gate ──► canary 1% ─► 10% ─► 50% ─► 100%
+                          │ quality: paired non-inferiority      │ live checks: errors, p95,
+                          │ security: zero critical leaks        │ guardrail leaks, online score
+                          │ errors, p95 latency, cost budgets    └─► auto-rollback + audit log
+```
 
-From week 10 it will then ship through a canary that rolls itself back when quality or SLOs regress.
+## What's in it
+| Area | What it does |
+|---|---|
+| **Offline gate** | Paired bootstrap non-inferiority, OWASP-mapped injection pack, error-rate cap, latency and cost budgets; PR report |
+| **LLM judges** | Versioned rubrics; a judge may gate only after it agrees with human labels (κ ≥ 0.6, fail recall ≥ 0.8, n ≥ 200) |
+| **Labelling** | `gauntlet label` interactive tool, stratified sampling, inter-annotator κ |
+| **Guardrails** | Output-side protected-string blocking and PII redaction; input injection detector as a monitored signal ([ADR-0008](docs/adr/0008-guardrail-strategy.md)) |
+| **Proxy** | FastAPI data plane: weighted stable/canary routing, scrypt-hashed keys, rate limits, Prometheus metrics, PII-redacted traces, hash-chained audit log, admin API |
+| **Rollout** | Canary controller: advance, hold, promote, or automatic rollback |
+| **Monitoring** | Grafana dashboard, 7 Prometheus alerts with runbooks, PSI drift, failure → test-case triage |
+| **Deploy** | Hardened Docker image, Compose stack, Kubernetes manifests (restricted PSS, NetworkPolicies), vLLM GPU manifest, Terraform for AWS |
+| **CI** | Lint, strict types, 129 tests at about 98% coverage, release gate, kind-cluster canary end-to-end, OWASP ZAP DAST, Bandit, Semgrep, gitleaks, pip-audit, SBOM, Trivy, checkov, terraform validate |
 
-> **Status: week 2 of 14.** The gate works end to end against a deterministic mock model and a synthetic task (below). Real TrialBridge cases with human labels, LLM judges, guardrails, canary rollout, a vLLM backend and AWS deployment follow the [plan](docs/plan.md). No model benchmark numbers are claimed yet.
+## Results (measured; details in [docs/results.md](docs/results.md))
+- **Gate verdicts on the demo releases:**
+  - harmless rewording → PASS (Δ +0.0003, CI ±0.02)
+  - cheaper model → FAIL (Δ −0.074)
+  - injectable model without output guardrail → FAIL (40/40 leaks)
+  - the same model with the guardrail → PASS (0/40)
+- **Proxy overhead:** ≤ 1 ms for 99.7% of 6,720 requests (SLO p95 < 40 ms). Peak throughput was 250 req/s on a shared 2-vCPU box against a 30 ms mock upstream.
+- **Honest negative result:** the pattern-based injection detector caught 40/40 known templates but **0/20 held-out attacks**. Enforcement therefore moved to the output side.
+- **Gate sizing:** 192 holdout cases were too few to show a harmless change was non-inferior at δ = 0.03. The suite grew to 474 rather than the margin being loosened.
 
-## Try it (about 1 minute, no API keys)
+> The gate and canary demos use a deterministic **mock model** and a **synthetic** TrialBridge-style task so CI is free and repeatable. They prove the system's behaviour, not any model's quality. Real-model runs use the `real-model-gate` workflow (bring an API key). See [Not done yet](#not-done-yet).
 
+## Quickstart (no API keys)
 ```bash
 pip install -e ".[dev]"
-make demo-all      # gates three example releases against the baseline
+make demo-all                                   # offline gate on 4 example releases
+docker compose up --build                       # mock model + proxy + a gate run
+docker compose --profile observability up       # + Prometheus :9090, Grafana :3000
 ```
 
+Canary against the local proxy:
+```bash
+export GAUNTLET_ADMIN_KEY=<long random string>
+export GAUNTLET_ADMIN_KEY_HASH=$(GAUNTLET_KEY_TO_HASH=$GAUNTLET_ADMIN_KEY gauntlet hash-key)
+docker compose up -d mock-llm gauntlet-proxy
+gauntlet rollout deploy --proxy http://localhost:8080 --release releases/trialbridge/baseline.yaml
+gauntlet rollout start  --proxy http://localhost:8080 --release releases/trialbridge/candidate.yaml
+gauntlet rollout watch  --proxy http://localhost:8080 --release releases/trialbridge/candidate.yaml
 ```
-=== releases/trialbridge/examples/cheaper_model.yaml     FAIL  (quality regressed)
-=== releases/trialbridge/examples/injectable_model.yaml  FAIL  (40/40 prompt injections leaked the system prompt)
-=== releases/trialbridge/examples/reworded_prompt.yaml   PASS  (not meaningfully worse)
-```
 
-Each run writes a markdown report, the same one CI attaches to every pull request:
+## How a change ships
+1. Edit `releases/trialbridge/candidate.yaml` (prompt, model, params, guardrails, budgets or rollout).
+2. Open a PR. The **release-gate** job runs baseline and candidate on the same cases and posts the report. Any failing check blocks the merge.
+3. After merging, run `gauntlet rollout start` then `watch`. The controller widens traffic only while error rate, p95 latency, guardrail leaks and online score stay healthy. Otherwise it rolls back and writes the reason to the audit log.
 
-| Check | Result | Detail |
-|---|---|---|
-| Quality non-inferiority | **FAIL** | mean diff -0.0743, 95% CI [-0.0953, -0.0546], margin -0.0300, n=474 |
-| Security packs (zero critical failures) | pass | 0/40 attacks succeeded |
-| Latency budget (p95) | pass | 19 ms (limit 1500 ms) |
-| Cost budget (mean/request) | pass | $0.000110 (limit $0.010000) |
+## Using real models
+`--base-url` takes any OpenAI-compatible endpoint: the [LLM Gateway](https://github.com/Cibisid/llm-gateway), vLLM (`deploy/k8s/gpu/vllm.yaml`), or a hosted API. Keys come from `GAUNTLET_API_KEY` and are never logged.
 
-*(From the cheaper-model example. The numbers come from the mock model and show the pipeline, not real model quality.)*
+## Not done yet
+- **Real-model numbers.** Add an API key and run the `real-model-gate` workflow.
+- **Judge qualification.** Needs at least 200 human labels via `gauntlet label`. No record is committed, because simulated labels don't count.
+- **Real TrialBridge cases.** Format and instructions are in `cases/trialbridge/real/README.md`.
+- **AWS apply.** `infra/terraform` is written and scanned but has not been applied (needs an AWS account; about $38/month baseline).
+- **High availability.** The proxy runs as a single replica; shared routing state is the next step ([ADR-0007](docs/adr/0007-in-repo-proxy-and-routing-state.md)).
 
-Docker: `make docker-up` runs the same gate in containers (non-root, read-only, all capabilities dropped).
-
-## How the gate decides
-- **Paired non-inferiority** ([ADR-0001](docs/adr/0001-non-inferiority-gate.md)). Candidate and baseline answer the same cases. The gate takes a bootstrap 95% CI of the score difference and passes if its lower bound is above -δ.
-- **Sized honestly.** With 192 holdout cases the gate correctly refused to call a harmless rewording "not worse", because the interval was too wide. The fix was more cases, not a looser margin ([ADR-0006](docs/adr/0006-synthetic-cases-and-mock-model.md)).
-- **Zero critical security failures**, with the attack success rate reported alongside its Wilson interval.
-- **Judges must qualify** before they can gate (week 4; [ADR-0002](docs/adr/0002-judge-qualification.md)).
-
-## Use it in a pull request
-1. Edit `releases/trialbridge/candidate.yaml` (prompt, model, params or budgets).
-2. Open a PR. The `release-gate` job runs the candidate and baseline and posts the report to the job summary. It fails the check if any gate fails.
-3. To promote, copy the candidate to `baseline.yaml`. Every release has a content-addressed ID (`gauntlet id <file>`).
+## Docs
+- [Design](docs/design.md)
+- ADRs:
+  - [0001 non-inferiority](docs/adr/0001-non-inferiority-gate.md)
+  - [0002 judge qualification](docs/adr/0002-judge-qualification.md)
+  - [0006 synthetic suite](docs/adr/0006-synthetic-cases-and-mock-model.md)
+  - [0007 proxy](docs/adr/0007-in-repo-proxy-and-routing-state.md)
+  - [0008 guardrails](docs/adr/0008-guardrail-strategy.md)
+- [Threat model](docs/threat-model.md)
+- [Security report](docs/security-report.md)
+- [Results](docs/results.md)
+- [Runbooks](deploy/observability/runbooks.md)
+- [Terraform](infra/terraform/README.md)
+- [Why this project](docs/market-evidence.md)
 
 ## CLI
 ```
-gauntlet run  --release R.yaml --cases C.jsonl --base-url http://host/v1 --out results.jsonl
-gauntlet gate --baseline B.jsonl --candidate C.jsonl --release R.yaml --report report.md
-gauntlet id   R.yaml
-gauntlet mock-server --port 8089
-```
-`--base-url` works with any OpenAI-compatible endpoint: the [LLM Gateway](https://github.com/Cibisid/llm-gateway), vLLM, or a hosted API. The key is read from `GAUNTLET_API_KEY`.
-
-## Engineering
-- **CI on every push:**
-  - ruff and mypy `--strict`
-  - unit and integration tests on Python 3.11–3.13, with a coverage gate at 90% (currently about 98%)
-  - a check that the case set regenerates byte-for-byte
-  - the release gate
-  - Bandit and Semgrep (SAST), pip-audit, gitleaks, a CycloneDX SBOM
-  - a Docker build, a compose smoke test and a Trivy image scan
-- **Docs:**
-  - [design doc](docs/design.md) with SLOs
-  - [ADRs](docs/adr/)
-  - [STRIDE threat model](docs/threat-model.md)
-  - [security report](docs/security-report.md)
-  - [market evidence](docs/market-evidence.md) explaining why this project exists
-
-## Layout
-```
-src/gauntlet/   stats, cases, prompts, scorers, providers, runner, gate, cli, mock_server, trialsim
-releases/       baseline, candidate and example releases (YAML)
-cases/          versioned case sets (JSONL)
-scripts/        case generator, local gate demo
-tests/          unit + integration (real HTTP server, real CLI)
-docs/           design, ADRs, threat model, security report, plan, research data
+offline:     id · run · gate · label · qualify · agreement · guardrail-eval
+production:  proxy · hash-key · rollout {deploy,start,tick,watch,promote,rollback,status}
+             audit-verify · drift · triage · bench
+testing:     mock-server
 ```
