@@ -1,0 +1,4 @@
+# False positive: a made-up test key literal ("a-sufficiently-long-key-...") in a
+# unit test. It was never a credential. Tests now generate keys at runtime with
+# secrets.token_urlsafe, so no key literals remain in the tree.
+bcdad98afa75ebb16e4b389735815a7a60eb8ef7:tests/integration/test_platform_e2e.py:generic-api-key:168

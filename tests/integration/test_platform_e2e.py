@@ -6,6 +6,7 @@ tested; real qualification needs real human labels (judges/qualifications/README
 
 import json
 import os
+import secrets
 import socket
 import threading
 import time
@@ -24,8 +25,8 @@ from gauntlet.runner import read_results
 ROOT = Path(__file__).resolve().parents[2]
 REL = ROOT / "releases" / "trialbridge"
 CASES = ROOT / "cases" / "trialbridge" / "synthetic_v1.jsonl"
-ADMIN = "admin-key-integration-0123456789"
-CLIENT = "client-key-integration-012345678"
+ADMIN = secrets.token_urlsafe(32)  # generated per run: no key literals in the repo
+CLIENT = secrets.token_urlsafe(32)
 
 
 def _free_port() -> int:
@@ -165,6 +166,6 @@ def test_judge_label_qualify_flow(stack, tmp_path, monkeypatch, capsys):
 def test_hash_key_cli(monkeypatch, capsys):
     monkeypatch.setenv("GAUNTLET_KEY_TO_HASH", "short")
     assert main(["hash-key"]) == 2
-    monkeypatch.setenv("GAUNTLET_KEY_TO_HASH", "a-sufficiently-long-key-1234567")
+    monkeypatch.setenv("GAUNTLET_KEY_TO_HASH", secrets.token_urlsafe(32))
     assert main(["hash-key"]) == 0
     assert capsys.readouterr().out.startswith("scrypt$")

@@ -1,5 +1,6 @@
 import json
 import random
+import secrets
 import time
 from pathlib import Path
 
@@ -33,8 +34,8 @@ REL = ROOT / "releases" / "trialbridge"
 CASES = load_cases(ROOT / "cases" / "trialbridge" / "synthetic_v1.jsonl")
 QUALITY = [dict(c.inputs) for c in select(CASES, suite="quality")][:200]
 ATTACKS = [dict(c.inputs) for c in select(CASES, suite="security")]
-CLIENT_KEY = "client-key-for-tests-0123456789"
-ADMIN_KEY = "admin-key-for-tests-0123456789ab"
+CLIENT_KEY = secrets.token_urlsafe(32)  # generated per run: no key literals in the repo
+ADMIN_KEY = secrets.token_urlsafe(32)
 
 
 def upstream(fail_models=()):
