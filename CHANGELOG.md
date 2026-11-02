@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+- `real-model-gate` workflow: free-tier defaults (Groq), both models run in parallel with request pacing, a model-only diff between releases, and a results table in the job summary.
+- The provider paces requests (`--max-rpm`) and honours `Retry-After` (capped at 60 s); `--max-retries` is configurable.
+- `gauntlet summarize`: per-release results table (exact match with a Wilson CI, raw canary-leak rate, served leaks, latency, tokens, cost).
+- [docs/real-models.md](docs/real-models.md).
+
 ## 1.0.0 — 2026-11-02
 - **LLM judges.** Versioned rubrics; qualification against human labels (κ, fail precision/recall, n); refuse to gate with an unqualified or changed judge (ADR-0002).
 - **Labelling.** Interactive `gauntlet label` with stratified sampling and resume support; `gauntlet agreement` for inter-annotator κ.

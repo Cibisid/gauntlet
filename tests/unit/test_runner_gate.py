@@ -203,3 +203,37 @@ def test_percentile_nearest_rank():
     assert percentile([5, 1, 3, 2, 4], 95) == 5
     assert percentile([5, 1, 3, 2, 4], 50) == 3
     assert math.isnan(percentile([], 95))
+
+
+def test_provider_honours_retry_after_with_cap():
+    slept = []
+
+    def handler(request):
+        if len(slept) == 0 and not getattr(handler, "done", False):
+            handler.done = True
+            return httpx.Response(429, headers={"retry-after": "7"}, json={})
+        return httpx.Response(200, json=OK_BODY)
+
+    p = OpenAICompatibleProvider("http://x/v1", client=httpx.Client(
+        transport=httpx.MockTransport(handler)), backoff_s=0.5, sleep=slept.append)  # fmt: skip
+    assert p.complete("m", [], {}).text == "hi"
+    assert slept == [7.0]
+
+
+def test_retry_after_parsing():
+    from gauntlet.providers import MAX_RETRY_AFTER_S, _retry_after_s
+
+    assert _retry_after_s(None) is None
+    assert _retry_after_s("Wed, 21 Oct 2015 07:28:00 GMT") is None
+    assert _retry_after_s("9999") == MAX_RETRY_AFTER_S
+    assert _retry_after_s("-3") == 0.0
+
+
+def test_provider_paces_requests_to_max_rpm():
+    slept = []
+    client = httpx.Client(transport=_transport([(200, OK_BODY)] * 3, []))
+    p = OpenAICompatibleProvider("http://x/v1", client=client, max_rpm=60, sleep=slept.append)
+    for _ in range(3):
+        p.complete("m", [], {})
+    # first call goes at once; the next two wait for their 1-second slots
+    assert len(slept) == 2 and all(0.5 < s <= 2.0 for s in slept)

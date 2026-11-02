@@ -36,7 +36,12 @@ def _cmd_run(args: argparse.Namespace) -> int:
 
     release = load_release(args.release)
     cases = load_cases(args.cases)
-    provider = OpenAICompatibleProvider(args.base_url, timeout_s=args.timeout)
+    provider = OpenAICompatibleProvider(
+        args.base_url,
+        timeout_s=args.timeout,
+        max_retries=args.max_retries,
+        max_rpm=args.max_rpm,
+    )
     judge = None
     if args.judge_rubric:
         rubric = Rubric.load(args.judge_rubric)
@@ -260,6 +265,25 @@ def _cmd_mock(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_summarize(args: argparse.Namespace) -> int:
+    from gauntlet.summary import summarize, to_markdown
+
+    rows = {}
+    for item in args.run:
+        name, sep, path = item.partition("=")
+        if not sep or not name or not path:
+            print(f"--run expects NAME=PATH, got {item!r}", file=sys.stderr)
+            return 2
+        rows[name] = summarize(read_results(path), split=args.split)
+    md = to_markdown(rows)
+    print(md, end="")
+    if args.out:
+        Path(args.out).write_text(md, encoding="utf-8")
+    if args.json:
+        Path(args.json).write_text(json.dumps(rows, indent=2, sort_keys=True), encoding="utf-8")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="gauntlet", description="Eval-gated releases for LLM systems")
     p.add_argument("--version", action="version", version=f"gauntlet {__version__}")
@@ -276,6 +300,8 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--out", required=True)
     s.add_argument("--concurrency", type=int, default=8)
     s.add_argument("--timeout", type=float, default=60.0)
+    s.add_argument("--max-rpm", type=float, help="pace requests to stay under a rate limit")
+    s.add_argument("--max-retries", type=int, default=3, help="retries on 429/5xx/timeouts")
     s.add_argument("--judge-rubric", help="rubric YAML for cases scored by 'judge:<name>'")
     s.add_argument("--judge-base-url", help="endpoint for the judge model (default: --base-url)")
     s.add_argument("--qualifications", default="judges/qualifications")
@@ -362,6 +388,13 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--out", default="bench.json")
     s.add_argument("--note", default="")
     s.set_defaults(func=_cmd_bench)
+
+    s = sub.add_parser("summarize", help="per-release results table from run outputs")
+    s.add_argument("--run", action="append", required=True, help="NAME=results.jsonl")
+    s.add_argument("--split", default="holdout")
+    s.add_argument("--out", help="write markdown here")
+    s.add_argument("--json", help="write raw numbers here")
+    s.set_defaults(func=_cmd_summarize)
 
     s = sub.add_parser("mock-server", help="run the deterministic mock LLM server")
     s.add_argument("--host", default="127.0.0.1")

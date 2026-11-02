@@ -1,25 +1,36 @@
 name: real-model-gate
 
-# Manually triggered: runs the gate against a REAL model behind any
-# OpenAI-compatible endpoint (hosted API, LLM Gateway, or vLLM).
-# Setup once: Settings -> Secrets and variables -> Actions:
-#   GAUNTLET_REAL_BASE_URL  e.g. https://<your-gateway>/v1
-#   GAUNTLET_API_KEY        the provider/gateway key (never printed)
+# Manually triggered: runs the full case set against two REAL models behind any
+# OpenAI-compatible endpoint, gates the candidate against the baseline, and
+# publishes a results table (job summary + artifact).
+#
+# One-time setup: Settings -> Secrets and variables -> Actions -> New repository secret
+#   GAUNTLET_API_KEY   key for the endpoint below (never printed)
+#
+# Default endpoint is Groq's free tier (no card needed). One run is ~840 requests and
+# ~350K tokens per model, which fits the free daily quota of the default models once
+# per day. Any OpenAI-compatible endpoint works (OpenAI, OpenRouter, LLM Gateway, vLLM).
 on:
   workflow_dispatch:
     inputs:
+      base_url:
+        description: "OpenAI-compatible base URL"
+        default: "https://api.groq.com/openai/v1"
       baseline_model:
-        description: "Model name for the baseline release"
-        required: true
+        description: "Baseline model (the one in production)"
+        default: "meta-llama/llama-4-scout-17b-16e-instruct"
+      baseline_price:
+        description: "Baseline list price USD per 1M tokens, 'in,out'"
+        default: "0.11,0.34"
       candidate_model:
-        description: "Model name for the candidate release"
-        required: true
-      price_in_per_mtok:
-        description: "Candidate input price (USD per 1M tokens)"
-        default: "0"
-      price_out_per_mtok:
-        description: "Candidate output price (USD per 1M tokens)"
-        default: "0"
+        description: "Candidate model (the proposed swap)"
+        default: "llama-3.1-8b-instant"
+      candidate_price:
+        description: "Candidate list price USD per 1M tokens, 'in,out'"
+        default: "0.05,0.08"
+      max_rpm:
+        description: "Requests per minute per model (stay under the provider limit)"
+        default: "12"
 
 permissions:
   contents: read
@@ -27,46 +38,90 @@ permissions:
 jobs:
   gate:
     runs-on: ubuntu-latest
-    environment: real-models
+    timeout-minutes: 240
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - run: pip install -e .
-      - name: Build releases for the chosen models
+      - name: Check the key and that both models exist
+        env:
+          GAUNTLET_API_KEY: ${{ secrets.GAUNTLET_API_KEY }}
+          URL: ${{ inputs.base_url }}
+          MODELS: ${{ inputs.baseline_model }} ${{ inputs.candidate_model }}
+        run: |
+          python - <<'PY'
+          import os, sys, httpx
+          if not os.environ.get("GAUNTLET_API_KEY"):
+              sys.exit("Secret GAUNTLET_API_KEY is not set (Settings -> Secrets and variables -> Actions).")
+          r = httpx.get(os.environ["URL"].rstrip("/") + "/models",
+                        headers={"Authorization": "Bearer " + os.environ["GAUNTLET_API_KEY"]}, timeout=30)
+          if r.status_code != 200:
+              sys.exit(f"GET /models returned HTTP {r.status_code}; check the key and base_url.")
+          have = {m["id"] for m in r.json().get("data", [])}
+          missing = [m for m in os.environ["MODELS"].split() if m not in have]
+          if missing:
+              print("Available models:\n  " + "\n  ".join(sorted(have)))
+              sys.exit(f"Not available at this endpoint: {missing}")
+          print("key OK; models available")
+          PY
+      - name: Build releases (identical except for the model)
         env:
           BASE_MODEL: ${{ inputs.baseline_model }}
           CAND_MODEL: ${{ inputs.candidate_model }}
-          PIN: ${{ inputs.price_in_per_mtok }}
-          POUT: ${{ inputs.price_out_per_mtok }}
+          BASE_PRICE: ${{ inputs.baseline_price }}
+          CAND_PRICE: ${{ inputs.candidate_price }}
         run: |
           python - <<'PY'
           import os, yaml
-          base = yaml.safe_load(open("releases/trialbridge/baseline.yaml"))
-          base["model"] = {"name": os.environ["BASE_MODEL"]}
-          cand = yaml.safe_load(open("releases/trialbridge/candidate.yaml"))
-          cand["model"] = {"name": os.environ["CAND_MODEL"],
-                           "price_in_per_mtok": float(os.environ["PIN"]),
-                           "price_out_per_mtok": float(os.environ["POUT"])}
-          yaml.safe_dump(base, open("/tmp/base.yaml", "w"))
-          yaml.safe_dump(cand, open("/tmp/cand.yaml", "w"))
+          def build(model, price, path):
+              rel = yaml.safe_load(open("releases/trialbridge/baseline.yaml"))
+              pin, pout = (float(x) for x in price.split(","))
+              rel["model"] = {"name": model, "price_in_per_mtok": pin, "price_out_per_mtok": pout}
+              yaml.safe_dump(rel, open(path, "w"), sort_keys=False)
+          build(os.environ["BASE_MODEL"], os.environ["BASE_PRICE"], "/tmp/base.yaml")
+          build(os.environ["CAND_MODEL"], os.environ["CAND_PRICE"], "/tmp/cand.yaml")
           PY
-      - name: Run and gate
+          mkdir -p out && cp /tmp/base.yaml out/baseline-release.yaml && cp /tmp/cand.yaml out/candidate-release.yaml
+      - name: Run both models (in parallel; separate per-model quotas)
         env:
           GAUNTLET_API_KEY: ${{ secrets.GAUNTLET_API_KEY }}
-          URL: ${{ secrets.GAUNTLET_REAL_BASE_URL }}
+          URL: ${{ inputs.base_url }}
+          RPM: ${{ inputs.max_rpm }}
         run: |
-          mkdir -p out
-          gauntlet run --release /tmp/base.yaml --cases cases/trialbridge/synthetic_v1.jsonl --base-url "$URL" --out out/baseline.jsonl --concurrency 4
-          gauntlet run --release /tmp/cand.yaml --cases cases/trialbridge/synthetic_v1.jsonl --base-url "$URL" --out out/candidate.jsonl --concurrency 4
+          common="--cases cases/trialbridge/synthetic_v1.jsonl --base-url $URL --concurrency 4 --max-rpm $RPM --max-retries 8 --timeout 120"
+          gauntlet run --release /tmp/base.yaml --out out/baseline.jsonl $common > out/baseline.log 2>&1 &
+          b=$!
+          gauntlet run --release /tmp/cand.yaml --out out/candidate.jsonl $common > out/candidate.log 2>&1 &
+          c=$!
+          wait $b; rb=$?
+          wait $c; rc=$?
+          cat out/baseline.log out/candidate.log
+          test $rb -eq 0 && test $rc -eq 0
+      - name: Gate and results table
+        env:
+          BASE_MODEL: ${{ inputs.baseline_model }}
+          CAND_MODEL: ${{ inputs.candidate_model }}
+          URL: ${{ inputs.base_url }}
+        run: |
           set +e
           gauntlet gate --baseline out/baseline.jsonl --candidate out/candidate.jsonl --release /tmp/cand.yaml --report out/gate-report.md
           status=$?
-          cat out/gate-report.md >> "$GITHUB_STEP_SUMMARY"
-          exit $status
+          set -e
+          gauntlet summarize --run "$BASE_MODEL=out/baseline.jsonl" --run "$CAND_MODEL=out/candidate.jsonl" \
+            --out out/results.md --json out/results.json
+          {
+            echo "## Real-model results"
+            echo "Endpoint: \`$URL\` · run ${{ github.run_id }} · commit ${{ github.sha }}"
+            echo
+            cat out/results.md
+            echo
+            cat out/gate-report.md
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "gate exit code: $status (1 = candidate rejected, which is a valid result)"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: real-model-gate
+          name: real-model-results
           path: out/

@@ -63,7 +63,7 @@ gauntlet rollout watch  --proxy http://localhost:8080 --release releases/trialbr
 `--base-url` takes any OpenAI-compatible endpoint: the [LLM Gateway](https://github.com/Cibisid/llm-gateway), vLLM (`deploy/k8s/gpu/vllm.yaml`), or a hosted API. Keys come from `GAUNTLET_API_KEY` and are never logged.
 
 ## Not done yet
-- **Real-model numbers.** Add an API key and run the `real-model-gate` workflow.
+- **Real-model numbers.** The `real-model-gate` workflow is ready. It runs free on Groq: add one secret and click Run ([guide](docs/real-models.md)).
 - **Judge qualification.** Needs at least 200 human labels via `gauntlet label`. No record is committed, because simulated labels don't count.
 - **Real TrialBridge cases.** Format and instructions are in `cases/trialbridge/real/README.md`.
 - **AWS apply.** `infra/terraform` is written and scanned but has not been applied (needs an AWS account; about $38/month baseline).
