@@ -6,7 +6,10 @@ import hashlib
 import json
 import re
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
+
+import yaml
 
 REQUIRED_KEYS = ("app", "prompt", "model", "params")
 # Keys that look like inline credentials. "max_tokens" must stay allowed, so
@@ -41,6 +44,16 @@ def validate(doc: Mapping[str, Any]) -> None:
     if missing:
         raise ReleaseError(f"missing required keys: {missing}")
     _check_no_secrets(doc)
+
+
+def load_release(path: str | Path) -> dict[str, Any]:
+    """Load and validate a release YAML file."""
+    with Path(path).open(encoding="utf-8") as fh:
+        doc = yaml.safe_load(fh)
+    if not isinstance(doc, dict):
+        raise ReleaseError(f"{path}: release must be a mapping")
+    validate(doc)
+    return doc
 
 
 def canonical_json(doc: Mapping[str, Any]) -> str:

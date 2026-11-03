@@ -1,0 +1,16 @@
+# Copy to terraform.tfvars and edit. terraform.tfvars is gitignored.
+# Contains no secrets: API keys go into Secrets Manager after apply.
+
+region      = "us-east-1"
+admin_cidr  = "203.0.113.7/32" # your public IP: curl -s https://checkip.amazonaws.com
+alert_email = "you@example.com"
+budget_usd  = 40
+
+# Set false if this AWS account already has a GitHub Actions OIDC provider.
+create_github_oidc_provider = true
+
+# Benchmark window: set true, apply, run benchmarks, then set false and apply.
+enable_gpu            = false
+gpu_instance_type     = "g6.xlarge"
+gpu_max_runtime_hours = 4
+vllm_model            = "Qwen/Qwen2.5-7B-Instruct"

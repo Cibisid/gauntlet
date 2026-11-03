@@ -1,0 +1,91 @@
+# Alert rules for the Gauntlet data-plane proxy.
+# Every rule carries: labels.severity, annotations.summary/description/runbook_url.
+# runbook_url anchors match the headings in deploy/observability/runbooks.md.
+groups:
+  - name: gauntlet-proxy
+    rules:
+      - alert: GauntletProxyDown
+        expr: up{job="gauntlet-proxy"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Gauntlet proxy is not being scraped"
+          description: "Prometheus has failed to scrape {{ $labels.instance }} for 1 minute. Every other Gauntlet alert is blind while this fires."
+          runbook_url: "https://github.com/Cibisid/gauntlet/blob/main/deploy/observability/runbooks.md#gauntletproxydown"
+
+      - alert: GauntletHighErrorRate
+        expr: |
+          (
+            sum by (release) (rate(gauntlet_requests_total{status="error"}[5m]))
+            /
+            sum by (release) (rate(gauntlet_requests_total[5m]))
+          ) > 0.02
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Error rate above 2% for release {{ $labels.release }}"
+          description: "Release {{ $labels.release }} has returned status=error on {{ $value | humanizePercentage }} of requests over the last 5m (threshold 2%). Guardrail blocks are not counted as errors."
+          runbook_url: "https://github.com/Cibisid/gauntlet/blob/main/deploy/observability/runbooks.md#gauntlethigherrorrate"
+
+      - alert: GauntletLatencySLOBreach
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (release, le) (rate(gauntlet_request_latency_seconds_bucket[5m]))
+          ) > 1.5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "p95 latency above 1.5s for release {{ $labels.release }}"
+          description: "p95 request latency for release {{ $labels.release }} is {{ $value | humanizeDuration }} over the last 5m (SLO 1.5s)."
+          runbook_url: "https://github.com/Cibisid/gauntlet/blob/main/deploy/observability/runbooks.md#gauntletlatencyslobreach"
+
+      - alert: GauntletCanaryLeak
+        expr: sum by (release) (increase(gauntlet_guardrail_blocks_total{check="canary_leak"}[5m])) > 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Canary token leak blocked on release {{ $labels.release }}"
+          description: "The canary_leak guardrail fired {{ $value | humanize }} time(s) in the last 5m on release {{ $labels.release }}. The model tried to emit a planted secret: treat as a prompt-injection or system-prompt exfiltration incident."
+          runbook_url: "https://github.com/Cibisid/gauntlet/blob/main/deploy/observability/runbooks.md#gauntletcanaryleak"
+
+      - alert: GauntletOnlineScoreDrop
+        # Only alert for releases that are actually receiving traffic.
+        expr: |
+          gauntlet_online_score < 0.9
+          and on (release)
+          gauntlet_release_weight > 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Online quality score below 0.9 for release {{ $labels.release }}"
+          description: "Rolling online score for release {{ $labels.release }} is {{ $value | printf \"%.3f\" }} and has stayed below 0.9 for 10m."
+          runbook_url: "https://github.com/Cibisid/gauntlet/blob/main/deploy/observability/runbooks.md#gauntletonlinescoredrop"
+
+      - alert: GauntletRollbackHappened
+        expr: increase(gauntlet_rollbacks_total[10m]) > 0
+        for: 0m
+        labels:
+          severity: info
+        annotations:
+          summary: "A Gauntlet rollout was rolled back"
+          description: "gauntlet_rollbacks_total increased by {{ $value | humanize }} in the last 10m. The candidate's traffic weight should now be 0; confirm and investigate why."
+          runbook_url: "https://github.com/Cibisid/gauntlet/blob/main/deploy/observability/runbooks.md#gauntletrollbackhappened"
+
+      - alert: GauntletCostBurnRate
+        # Configurable budget: the trailing "> 5" is the USD/hour threshold
+        # across all releases. Change it to your budget, e.g. "> 20" for $20/h.
+        # Per-release variant: replace sum(...) with sum by (release) (...).
+        expr: sum(rate(gauntlet_cost_usd_total[15m])) * 3600 > 5
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Model spend above $5/hour"
+          description: "Gauntlet is spending ${{ $value | printf \"%.2f\" }}/hour (15m rate), above the configured $5/hour budget."
+          runbook_url: "https://github.com/Cibisid/gauntlet/blob/main/deploy/observability/runbooks.md#gauntletcostburnrate"

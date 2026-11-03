@@ -28,12 +28,45 @@ jobs:
       - name: Lint
         run: ruff check . && ruff format --check .
       - name: Type check
-        run: mypy
-      - name: Unit tests with coverage gate
+        run: python -m mypy
+      - name: Unit + integration tests with coverage gate
         run: pytest --cov=src/gauntlet --cov-report=xml
+      - name: Case set is reproducible from the generator
+        if: matrix.python == '3.12'
+        run: |
+          python scripts/make_synthetic_cases.py --out /tmp/regen.jsonl
+          diff -q /tmp/regen.jsonl cases/trialbridge/synthetic_v1.jsonl
+
+  release-gate:
+    # Gates the release a PR proposes (releases/trialbridge/candidate.yaml)
+    # against production (baseline.yaml) and publishes the report.
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -e .
+      - name: Run gate
+        run: |
+          set +e
+          OUT_DIR=out scripts/gate_demo.sh
+          status=$?
+          cat out/gate-report.md >> "$GITHUB_STEP_SUMMARY"
+          exit $status
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gate-results
+          path: out/
 
   security:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read  # gitleaks lists the PR's commits
     steps:
       - uses: actions/checkout@v4
         with:
@@ -57,3 +90,90 @@ jobs:
         with:
           format: cyclonedx-json
           output-file: sbom.cdx.json
+
+  kubernetes-e2e:
+    # Real cluster: deploy proxy + mock model with hardened manifests, then run a
+    # leaking canary (must roll back) and a healthy one (must promote).
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -e .
+      - uses: helm/kind-action@v1.15.1
+        with:
+          cluster_name: gauntlet
+      - run: KIND_CLUSTER=gauntlet scripts/k8s_e2e.sh
+      - name: Diagnostics on failure
+        if: failure()
+        run: |
+          kubectl -n gauntlet get all,netpol -o wide || true
+          kubectl -n gauntlet logs deploy/gauntlet-proxy --tail=200 || true
+
+  dast:
+    # OWASP ZAP baseline scan against the running proxy.
+    runs-on: ubuntu-latest
+    needs: test
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Start mock model + proxy
+        run: |
+          docker build -t gauntlet:dev .
+          docker compose up -d mock-llm gauntlet-proxy
+          for i in $(seq 1 60); do curl -fsS http://127.0.0.1:8080/healthz && break; sleep 1; done
+      - name: ZAP baseline
+        uses: zaproxy/action-baseline@v0.15.0
+        with:
+          target: http://127.0.0.1:8080
+          rules_file_name: .zap/rules.tsv
+          fail_action: true
+          allow_issue_writing: false
+          artifact_name: zap-report
+
+  infra:
+    # Terraform + Kubernetes manifests: format, validate, policy scan.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v4.0.1
+        with:
+          terraform_version: 1.9.8
+      - name: terraform fmt
+        run: terraform fmt -check -recursive infra/terraform
+      - name: terraform validate
+        working-directory: infra/terraform/envs/staging
+        run: terraform init -backend=false -input=false && terraform validate
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Checkov (Terraform, Kubernetes, Dockerfile)
+        run: |
+          pip install checkov==3.4.2
+          checkov -d infra/terraform --quiet --compact
+          checkov -d deploy/k8s --framework kubernetes --quiet --compact
+          checkov -f Dockerfile --framework dockerfile --quiet --compact
+
+  container:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -t gauntlet:ci .
+      - name: Smoke test (mock server healthz + one gate in compose)
+        run: |
+          mkdir -p out && chmod 777 out
+          docker compose up --abort-on-container-exit --exit-code-from gate
+          test -s out/gate-report.md
+      - name: Container scan (Trivy)
+        uses: aquasecurity/trivy-action@v0.35.0  # immutable release tag
+        with:
+          image-ref: gauntlet:ci
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"

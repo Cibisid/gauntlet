@@ -1,0 +1,15 @@
+# Terraform local state and working files
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+# Real variable values (may contain your IP and email); commit only *.tfvars.example
+*.tfvars
+*.tfvars.json
+!*.tfvars.example

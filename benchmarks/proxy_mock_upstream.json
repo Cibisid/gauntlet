@@ -1,0 +1,38 @@
+{
+  "target": "http://127.0.0.1:8080",
+  "note": "Upstream: bundled mock model with a fixed 30 ms delay. Measures proxy overhead and throughput, NOT model quality or GPU serving.",
+  "machine": "Linux x86_64, Python 3.13.18",
+  "duration_s_per_level": 15.0,
+  "levels": [
+    {
+      "concurrency": 1,
+      "requests": 411,
+      "errors": 0,
+      "duration_s": 15.0,
+      "throughput_rps": 27.4,
+      "p50_ms": 36.04,
+      "p95_ms": 39.29,
+      "p99_ms": 42.18
+    },
+    {
+      "concurrency": 8,
+      "requests": 2405,
+      "errors": 0,
+      "duration_s": 15.044,
+      "throughput_rps": 159.86,
+      "p50_ms": 50.06,
+      "p95_ms": 59.86,
+      "p99_ms": 65.28
+    },
+    {
+      "concurrency": 32,
+      "requests": 3904,
+      "errors": 5,
+      "duration_s": 15.593,
+      "throughput_rps": 250.04,
+      "p50_ms": 95.96,
+      "p95_ms": 145.89,
+      "p99_ms": 1129.33
+    }
+  ]
+}

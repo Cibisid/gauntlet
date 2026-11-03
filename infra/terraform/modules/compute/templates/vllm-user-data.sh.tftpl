@@ -1,0 +1,48 @@
+#!/bin/bash
+# Starts a vLLM OpenAI-compatible server in Docker on a GPU spot instance.
+# Expects an AMI with the NVIDIA driver, Docker and the NVIDIA container
+# toolkit preinstalled (default: AWS Deep Learning Base OSS Nvidia Driver GPU
+# AMI, Amazon Linux 2023). Rendered by Terraform (templatefile).
+set -euo pipefail
+
+exec > >(tee -a /var/log/gauntlet-vllm.log) 2>&1
+echo "gauntlet: vllm bootstrap start $(date -Is)"
+
+# Cost backstop: power off after the benchmark window. The instance's
+# shutdown behaviour is "terminate", so this ends billing for compute and
+# disk. Run `terraform apply -var enable_gpu=false` afterwards to tidy state.
+shutdown -h +${max_runtime_minutes} "gauntlet: GPU benchmark window over"
+
+systemctl enable --now amazon-ssm-agent || true
+systemctl enable --now docker
+
+API_KEY_ARGS=""
+if [ -n "${api_key_secret_arn}" ]; then
+  # Read on the host (the container has no IMDS access) and pass via env.
+  VLLM_API_KEY=$(aws secretsmanager get-secret-value \
+    --region "${region}" \
+    --secret-id "${api_key_secret_arn}" \
+    --query SecretString --output text)
+  export VLLM_API_KEY
+  API_KEY_ARGS="-e VLLM_API_KEY"
+fi
+
+mkdir -p /opt/hf-cache
+
+# shellcheck disable=SC2086
+docker run -d \
+  --name vllm \
+  --restart unless-stopped \
+  --gpus all \
+  --ipc=host \
+  --security-opt no-new-privileges:true \
+  -p ${vllm_port}:8000 \
+  -v /opt/hf-cache:/root/.cache/huggingface \
+  $API_KEY_ARGS \
+  "${vllm_image}" \
+  --model "${vllm_model}" \
+  --max-model-len ${vllm_max_model_len} \
+  --host 0.0.0.0 \
+  --port 8000
+
+echo "gauntlet: vllm container started $(date -Is)"

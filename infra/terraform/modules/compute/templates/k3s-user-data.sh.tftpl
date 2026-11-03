@@ -1,0 +1,38 @@
+#!/bin/bash
+# Bootstraps a single-node k3s server on Amazon Linux 2023.
+# Rendered by Terraform (templatefile); runs once on first boot via cloud-init.
+set -euo pipefail
+
+exec > >(tee -a /var/log/gauntlet-bootstrap.log) 2>&1
+echo "gauntlet: bootstrap start $(date -Is)"
+
+# The SSM agent ships with AL2023; make sure it is running.
+systemctl enable --now amazon-ssm-agent
+
+dnf -y update --security
+
+# Private IP via IMDSv2 (http_tokens = required).
+TOKEN=$(curl -sS -X PUT "http://169.254.169.254/latest/api/token" \
+  -H "X-aws-ec2-metadata-token-ttl-seconds: 300")
+PRIVATE_IP=$(curl -sS -H "X-aws-ec2-metadata-token: $TOKEN" \
+  http://169.254.169.254/latest/meta-data/local-ipv4)
+
+# k3s config: kubeconfig readable by root only, secrets encrypted at rest in
+# the datastore, API certificate valid for the Elastic IP.
+mkdir -p /etc/rancher/k3s
+cat > /etc/rancher/k3s/config.yaml <<EOF
+write-kubeconfig-mode: "0600"
+secrets-encryption: true
+node-ip: "$PRIVATE_IP"
+tls-san:
+  - "${tls_san}"
+  - "$PRIVATE_IP"
+EOF
+
+# Pinned k3s version. The install script verifies the binary's sha256 against
+# the release checksums for that version.
+curl -sfL https://get.k3s.io -o /tmp/k3s-install.sh
+INSTALL_K3S_VERSION="${k3s_version}" INSTALL_K3S_EXEC="server" sh /tmp/k3s-install.sh
+rm -f /tmp/k3s-install.sh
+
+echo "gauntlet: bootstrap done $(date -Is)"

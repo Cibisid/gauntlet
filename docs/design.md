@@ -1,6 +1,6 @@
 # Gauntlet — Design Document
 
-**Status:** Draft v0.1 · **Author:** Cibi · **Last updated:** 2026-10-30
+**Status:** v1.0 implemented (see docs/results.md for measurements; ADR-0007 and ADR-0008 changed §5 and §7) · **Author:** Cibi · **Last updated:** 2026-10-30
 
 Gauntlet is an eval-gated release platform for LLM and agent systems. No prompt, model, tool or routing change reaches users unless it passes offline evaluations, security test packs and latency/cost budgets. It then rolls out through a canary that rolls itself back when online quality or SLOs regress.
 
