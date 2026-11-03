@@ -52,15 +52,28 @@ def _cmd_run(args: argparse.Namespace) -> int:
                 print(f"refusing to gate with judge: {exc}", file=sys.stderr)
                 return 2
         judge = Judge(rubric, OpenAICompatibleProvider(args.judge_base_url or args.base_url))
+    rid = release_id(release)
+    if args.gate_cases_only:
+        cases = [c for c in cases if c.suite == "security" or c.split == "holdout"]
+    kept = []
+    if args.resume and Path(args.out).exists():
+        # Keep successful results for this exact release; errored cases run again.
+        kept = [r for r in read_results(args.out) if r.release_id == rid and not r.error]
+    done = {r.case_id for r in kept}
+    todo = [c for c in cases if c.id not in done]
+    if args.limit is not None:
+        todo = todo[: args.limit]
     try:
-        results = run_release(release, cases, provider, concurrency=args.concurrency, judge=judge)
+        new = run_release(release, todo, provider, concurrency=args.concurrency, judge=judge)
     finally:
         provider.close()
+    results = kept + new
     write_results(args.out, results)
     errors = sum(1 for r in results if r.error)
+    complete = len(results) - errors
     print(
-        f"ran {len(results)} cases for {release_id(release)} "
-        f"(case set {case_set_hash(cases)[:12]}); errors: {errors}; wrote {args.out}"
+        f"ran {len(new)} cases for {rid} (case set {case_set_hash(cases)[:12]}); "
+        f"complete: {complete}/{len(cases)}; errors: {errors}; wrote {args.out}"
     )
     return 0
 
@@ -302,6 +315,11 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--timeout", type=float, default=60.0)
     s.add_argument("--max-rpm", type=float, help="pace requests to stay under a rate limit")
     s.add_argument("--max-retries", type=int, default=3, help="retries on 429/5xx/timeouts")
+    s.add_argument(
+        "--gate-cases-only", action="store_true", help="only holdout quality + security cases"
+    )
+    s.add_argument("--resume", action="store_true", help="keep finished cases already in --out")
+    s.add_argument("--limit", type=int, help="run at most this many new cases (daily quotas)")
     s.add_argument("--judge-rubric", help="rubric YAML for cases scored by 'judge:<name>'")
     s.add_argument("--judge-base-url", help="endpoint for the judge model (default: --base-url)")
     s.add_argument("--qualifications", default="judges/qualifications")

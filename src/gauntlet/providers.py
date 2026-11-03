@@ -15,6 +15,15 @@ import httpx
 
 RETRYABLE_STATUS = frozenset({408, 409, 429, 500, 502, 503, 504})
 MAX_RETRY_AFTER_S = 60.0  # never sleep longer than this on a server-sent Retry-After
+# Release params forwarded to the endpoint; anything else in `params` is ignored.
+PASSTHROUGH_PARAMS = (
+    "temperature",
+    "max_tokens",
+    "top_p",
+    "seed",
+    "reasoning_effort",  # reasoning models (e.g. gpt-oss): low | medium | high
+    "include_reasoning",
+)
 
 
 class ProviderError(RuntimeError):
@@ -94,7 +103,7 @@ class OpenAICompatibleProvider:
         params: Mapping[str, Any],
     ) -> Completion:
         body: dict[str, Any] = {"model": model, "messages": list(messages)}
-        for key in ("temperature", "max_tokens", "top_p", "seed"):
+        for key in PASSTHROUGH_PARAMS:
             if key in params:
                 body[key] = params[key]
 
@@ -114,13 +123,24 @@ class OpenAICompatibleProvider:
                 last_error = f"HTTP {resp.status_code}"
                 if resp.status_code not in RETRYABLE_STATUS:
                     break
-                retry_after = _retry_after_s(resp.headers.get("retry-after"))
+                raw_wait = resp.headers.get("retry-after")
+                retry_after = _retry_after_s(raw_wait)
+                if retry_after == MAX_RETRY_AFTER_S and _seconds(raw_wait) > MAX_RETRY_AFTER_S:
+                    # Waiting would take minutes or hours: fail fast so the run can resume later.
+                    raise ProviderError(f"{model}: quota exhausted (HTTP {resp.status_code})")
             if attempt < self._max_retries:
                 delay = self._backoff_s * (2**attempt)
                 if retry_after is not None:
                     delay = max(delay, retry_after)
                 self._sleep(delay)
         raise ProviderError(f"{model}: {last_error}")
+
+
+def _seconds(value: str | None) -> float:
+    try:
+        return float(value) if value else 0.0
+    except ValueError:
+        return 0.0
 
 
 def _retry_after_s(value: str | None) -> float | None:

@@ -5,6 +5,8 @@
 - The provider paces requests (`--max-rpm`) and honours `Retry-After` (capped at 60 s); `--max-retries` is configurable.
 - `gauntlet summarize`: per-release results table (exact match with a Wilson CI, raw canary-leak rate, served leaks, latency, tokens, cost).
 - [docs/real-models.md](docs/real-models.md).
+- Resumable runs (`--resume`, `--limit`, `--gate-cases-only`) so a free daily quota can finish across days. A long `Retry-After` now fails fast instead of sleeping.
+- `reasoning_effort` and `include_reasoning` are passed through for reasoning models. The workflow defaults are now gpt-oss-120b vs gpt-oss-20b, since Groq retired the earlier defaults.
 
 ## 1.0.0 — 2026-11-02
 - **LLM judges.** Versioned rubrics; qualification against human labels (κ, fail precision/recall, n); refuse to gate with an unqualified or changed judge (ADR-0002).

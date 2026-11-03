@@ -237,3 +237,21 @@ def test_provider_paces_requests_to_max_rpm():
         p.complete("m", [], {})
     # first call goes at once; the next two wait for their 1-second slots
     assert len(slept) == 2 and all(0.5 < s <= 2.0 for s in slept)
+
+
+def test_provider_fails_fast_on_long_retry_after_and_forwards_reasoning_params():
+    seen, slept = [], []
+
+    def handler(request):
+        seen.append(request)
+        return httpx.Response(429, headers={"retry-after": "3600"}, json={})
+
+    p = OpenAICompatibleProvider("http://x/v1", client=httpx.Client(
+        transport=httpx.MockTransport(handler)), sleep=slept.append)  # fmt: skip
+    with pytest.raises(ProviderError, match="quota exhausted"):
+        p.complete("m", [], {"reasoning_effort": "low", "include_reasoning": False})
+    assert len(seen) == 1 and slept == []
+    assert (
+        b'"reasoning_effort": "low"' in seen[0].content
+        or b'"reasoning_effort":"low"' in seen[0].content
+    )

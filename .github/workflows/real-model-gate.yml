@@ -1,15 +1,15 @@
 name: real-model-gate
 
-# Manually triggered: runs the full case set against two REAL models behind any
-# OpenAI-compatible endpoint, gates the candidate against the baseline, and
-# publishes a results table (job summary + artifact).
+# Manually triggered: runs the gate cases (474 held-out quality + 40 injection) against
+# two REAL models behind any OpenAI-compatible endpoint, gates the candidate against the
+# baseline, and publishes a results table (job summary + artifact).
 #
 # One-time setup: Settings -> Secrets and variables -> Actions -> New repository secret
 #   GAUNTLET_API_KEY   key for the endpoint below (never printed)
 #
-# Default endpoint is Groq's free tier (no card needed). One run is ~840 requests and
-# ~350K tokens per model, which fits the free daily quota of the default models once
-# per day. Any OpenAI-compatible endpoint works (OpenAI, OpenRouter, LLM Gateway, vLLM).
+# Free tiers have daily token quotas, so runs are resumable: each run does at most
+# `limit` new cases per model. If the summary says "incomplete", run again the next day
+# with resume_from_run set to the previous run's ID. Paid tiers: set limit to 600.
 on:
   workflow_dispatch:
     inputs:
@@ -18,22 +18,32 @@ on:
         default: "https://api.groq.com/openai/v1"
       baseline_model:
         description: "Baseline model (the one in production)"
-        default: "meta-llama/llama-4-scout-17b-16e-instruct"
+        default: "openai/gpt-oss-120b"
       baseline_price:
         description: "Baseline list price USD per 1M tokens, 'in,out'"
-        default: "0.11,0.34"
+        default: "0.15,0.60"
       candidate_model:
         description: "Candidate model (the proposed swap)"
-        default: "llama-3.1-8b-instant"
+        default: "openai/gpt-oss-20b"
       candidate_price:
         description: "Candidate list price USD per 1M tokens, 'in,out'"
-        default: "0.05,0.08"
+        default: "0.075,0.30"
+      reasoning_effort:
+        description: "For reasoning models: low | medium | high (blank = don't send)"
+        default: "low"
       max_rpm:
-        description: "Requests per minute per model (stay under the provider limit)"
-        default: "12"
+        description: "Requests per minute per model"
+        default: "10"
+      limit:
+        description: "Max new cases per model in this run (free-tier daily quota)"
+        default: "260"
+      resume_from_run:
+        description: "Run ID to continue from (blank = start fresh)"
+        default: ""
 
 permissions:
   contents: read
+  actions: read  # download the previous run's results when resuming
 
 jobs:
   gate:
@@ -72,6 +82,7 @@ jobs:
           CAND_MODEL: ${{ inputs.candidate_model }}
           BASE_PRICE: ${{ inputs.baseline_price }}
           CAND_PRICE: ${{ inputs.candidate_price }}
+          EFFORT: ${{ inputs.reasoning_effort }}
         run: |
           python - <<'PY'
           import os, yaml
@@ -79,18 +90,32 @@ jobs:
               rel = yaml.safe_load(open("releases/trialbridge/baseline.yaml"))
               pin, pout = (float(x) for x in price.split(","))
               rel["model"] = {"name": model, "price_in_per_mtok": pin, "price_out_per_mtok": pout}
+              if os.environ["EFFORT"]:
+                  # reasoning tokens count against the completion budget
+                  rel["params"].update(reasoning_effort=os.environ["EFFORT"],
+                                       include_reasoning=False, max_tokens=1024)
               yaml.safe_dump(rel, open(path, "w"), sort_keys=False)
           build(os.environ["BASE_MODEL"], os.environ["BASE_PRICE"], "/tmp/base.yaml")
           build(os.environ["CAND_MODEL"], os.environ["CAND_PRICE"], "/tmp/cand.yaml")
           PY
           mkdir -p out && cp /tmp/base.yaml out/baseline-release.yaml && cp /tmp/cand.yaml out/candidate-release.yaml
+      - name: Load results from the previous run
+        if: inputs.resume_from_run != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN: ${{ inputs.resume_from_run }}
+        run: |
+          gh run download "$RUN" --repo "$GITHUB_REPOSITORY" -n real-model-results -D prev
+          cp prev/baseline.jsonl prev/candidate.jsonl out/
+          wc -l out/*.jsonl
       - name: Run both models (in parallel; separate per-model quotas)
         env:
           GAUNTLET_API_KEY: ${{ secrets.GAUNTLET_API_KEY }}
           URL: ${{ inputs.base_url }}
           RPM: ${{ inputs.max_rpm }}
+          LIMIT: ${{ inputs.limit }}
         run: |
-          common="--cases cases/trialbridge/synthetic_v1.jsonl --base-url $URL --concurrency 4 --max-rpm $RPM --max-retries 8 --timeout 120"
+          common="--cases cases/trialbridge/synthetic_v1.jsonl --base-url $URL --gate-cases-only --resume --limit $LIMIT --concurrency 4 --max-rpm $RPM --max-retries 8 --timeout 120"
           gauntlet run --release /tmp/base.yaml --out out/baseline.jsonl $common > out/baseline.log 2>&1 &
           b=$!
           gauntlet run --release /tmp/cand.yaml --out out/candidate.jsonl $common > out/candidate.log 2>&1 &
@@ -99,12 +124,23 @@ jobs:
           wait $c; rc=$?
           cat out/baseline.log out/candidate.log
           test $rb -eq 0 && test $rc -eq 0
-      - name: Gate and results table
+      - name: Gate and results table (when complete)
         env:
           BASE_MODEL: ${{ inputs.baseline_model }}
           CAND_MODEL: ${{ inputs.candidate_model }}
           URL: ${{ inputs.base_url }}
+          RUN_ID: ${{ github.run_id }}
         run: |
+          done_count() { python -c "import sys; from gauntlet.runner import read_results as r; print(sum(1 for x in r(sys.argv[1]) if not x.error))" "$1"; }
+          nb=$(done_count out/baseline.jsonl); nc=$(done_count out/candidate.jsonl)
+          echo "baseline $nb/514, candidate $nc/514"
+          if [ "$nb" -lt 514 ] || [ "$nc" -lt 514 ]; then
+            {
+              echo "## Incomplete: baseline $nb/514, candidate $nc/514 cases"
+              echo "Daily quota reached or limit hit. Run this workflow again (e.g. tomorrow) with **resume_from_run = $RUN_ID** and the same models."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
           set +e
           gauntlet gate --baseline out/baseline.jsonl --candidate out/candidate.jsonl --release /tmp/cand.yaml --report out/gate-report.md
           status=$?
@@ -113,7 +149,7 @@ jobs:
             --out out/results.md --json out/results.json
           {
             echo "## Real-model results"
-            echo "Endpoint: \`$URL\` · run ${{ github.run_id }} · commit ${{ github.sha }}"
+            echo "Endpoint: \`$URL\` · run $RUN_ID · commit $GITHUB_SHA"
             echo
             cat out/results.md
             echo
