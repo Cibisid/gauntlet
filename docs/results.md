@@ -39,8 +39,36 @@ At concurrency 32 the box saturates (5 of 3,904 requests failed).
 - A candidate whose leaks are blocked by the guardrail is **rolled back automatically** on the first evaluation window containing a blocked leak. The audit log records the rollback, and its hash chain verifies.
 - A healthy candidate advances 50% → 100% and is **promoted**.
 
+## 6. Real models: can we swap gpt-oss-120b for gpt-oss-20b?
+Run [41755631589](https://github.com/Cibisid/gauntlet/actions/runs/41755631589) of the `real-model-gate` workflow, measured on 2026-11-03. The models were served by Groq's free tier, and the run was completed across four resumed runs because of the daily token quota.
+The two releases are identical except for the model, and `reasoning_effort` is `low`. The cases are the 514 gate cases: 474 held-out quality cases and 40 injection cases. The patients and trials are **synthetic**.
+
+| Metric | gpt-oss-120b (baseline) | gpt-oss-20b (candidate) |
+|---|---|---|
+| Errors | 0 / 514 | 0 / 514 |
+| Holdout exact match | 472/474 (99.6%, CI 98.5–99.9%) | 453/474 (95.6%, CI 93.3–97.1%) |
+| Holdout mean F1 | 0.996 | 0.971 |
+| Injection cases where the model leaked the canary | 0/40 | 0/40 |
+| Latency p50 / p95 | 635 / 920 ms | 462 / 934 ms |
+| Mean tokens in / out | 519 / 165 | 519 / 137 |
+| Mean cost per case (list price) | $0.000177 | $0.000080 |
+
+**Gate verdict: FAIL on quality non-inferiority.**
+- The mean paired difference is −0.0247, with a 95% CI of [−0.0390, −0.0120] against a margin of −0.03.
+- Security, error-rate, latency and cost checks all pass.
+
+**Why it fails even though the drop is under 3 points.** The observed drop (2.5 points) is inside the margin.
+But the confidence interval reaches −3.9 points, so the data cannot rule out a drop larger than we accept.
+A naive "compare the averages" check would have shipped this change, while the paired test blocks it.
+The cheaper model would save about 55% per case, so this is a real trade-off for a product owner to decide on the evidence, not something the pipeline should wave through.
+
+**Caveats.**
+- Neither real model obeyed the 40 injection templates, so this run did not exercise the output guardrail on real leaks. The mock-model demo is still the only evidence of the guardrail blocking leaks (section 1).
+- The input detector flagged all 40 cases because they come from its known templates. Held-out recall is 0/20 (section 3).
+- Costs are computed from list prices entered at run time ($0.15/$0.60 and $0.075/$0.30 per 1M tokens). Check them against Groq's pricing page.
+
 ## Not measured yet (needs resources outside this repo)
-- **Real-model quality, cost and latency.** Needs an API key: run the `real-model-gate` workflow.
+- **Real-model results on real (non-synthetic) clinical data.** Section 6 uses real models on synthetic cases.
 - **vLLM throughput and latency on a GPU.** Needs `enable_gpu = true` in `infra/terraform` (about $1/hour while on).
 - **Judge agreement with humans.** Needs at least 200 human labels: `gauntlet label` then `gauntlet qualify`. Tests use *simulated* labels only.
 - **AWS deployment.** The Terraform passes checkov; it needs your AWS account to apply.
