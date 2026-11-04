@@ -31,10 +31,16 @@
   - injectable model without output guardrail → FAIL (40/40 leaks)
   - the same model with the guardrail → PASS (0/40)
 - **Proxy overhead:** ≤ 1 ms for 99.7% of 6,720 requests (SLO p95 < 40 ms). Peak throughput was 250 req/s on a shared 2-vCPU box against a 30 ms mock upstream.
+- **Real models (Groq, gpt-oss-120b → gpt-oss-20b, 514 gate cases each):**
+  - exact match 99.6% vs 95.6%
+  - the smaller model is about 55% cheaper per case
+  - gate **FAIL**: the observed drop is 2.5 points, but its 95% CI reaches 3.9 points, beyond the 3-point margin
+  - neither model leaked under injection
+  - details in [results §6](docs/results.md#6-real-models-can-we-swap-gpt-oss-120b-for-gpt-oss-20b)
 - **Honest negative result:** the pattern-based injection detector caught 40/40 known templates but **0/20 held-out attacks**. Enforcement therefore moved to the output side.
 - **Gate sizing:** 192 holdout cases were too few to show a harmless change was non-inferior at δ = 0.03. The suite grew to 474 rather than the margin being loosened.
 
-> The gate and canary demos use a deterministic **mock model** and a **synthetic** TrialBridge-style task so CI is free and repeatable. They prove the system's behaviour, not any model's quality. Real-model runs use the `real-model-gate` workflow (bring an API key). See [Not done yet](#not-done-yet).
+> The gate and canary demos use a deterministic **mock model** and a **synthetic** TrialBridge-style task so CI is free and repeatable. They prove the system's behaviour, not any model's quality. Real-model results come from the `real-model-gate` workflow ([guide](docs/real-models.md)). See [Not done yet](#not-done-yet).
 
 ## Quickstart (no API keys)
 ```bash
@@ -63,7 +69,6 @@ gauntlet rollout watch  --proxy http://localhost:8080 --release releases/trialbr
 `--base-url` takes any OpenAI-compatible endpoint: the [LLM Gateway](https://github.com/Cibisid/llm-gateway), vLLM (`deploy/k8s/gpu/vllm.yaml`), or a hosted API. Keys come from `GAUNTLET_API_KEY` and are never logged.
 
 ## Not done yet
-- **Real-model numbers.** The `real-model-gate` workflow is ready. It runs free on Groq: add one secret and click Run ([guide](docs/real-models.md)).
 - **Judge qualification.** Needs at least 200 human labels via `gauntlet label`. No record is committed, because simulated labels don't count.
 - **Real TrialBridge cases.** Format and instructions are in `cases/trialbridge/real/README.md`.
 - **AWS apply.** `infra/terraform` is written and scanned but has not been applied (needs an AWS account; about $38/month baseline).
