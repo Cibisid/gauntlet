@@ -87,7 +87,6 @@ gauntlet rollout watch  --proxy http://localhost:8080 --release releases/trialbr
 - [Results](docs/results.md)
 - [Runbooks](deploy/observability/runbooks.md)
 - [Terraform](infra/terraform/README.md)
-- [Why this project](docs/market-evidence.md)
 
 ## CLI
 ```

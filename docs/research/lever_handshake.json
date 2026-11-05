@@ -1,5 +1,0 @@
-{"lever":{"n":91,"nMidEntry":34,"boards":{"coupa":6,"dnb":5,"hive":6,"jumpcloud":1,"outreach":3,"palantir":3,"ro":1,"shieldai":12,"spotify":17,"veeva":8,"zoox":29},
-"themes":{"agents":31,"cost_optimization":45,"cpp":31,"data_eng":24,"distributed_systems":35,"evals":55,"gpu_kernels":17,"inference_serving":40,"kubernetes":15,"llm_genai":47,"mlops_pipelines":28,"observability":22,"python":77,"rag_retrieval":27,"safety_security":35,"training_finetune":25,"visa":9},
-"themesMidEntry":{"agents":12,"evals":20,"inference_serving":8,"llm_genai":18,"mlops_pipelines":10,"rag_retrieval":10,"safety_security":11,"training_finetune":11,"python":30,"observability":3,"distributed_systems":10}},
-"handshake":{"mle_total":934,"mle_open_to_sponsorship":37,"swe_total":3707,"swe_open_to_sponsorship":144,
-"sponsor_examples":"comma.ai, Max Tech, TikTok (grad MLE eval), BlackRock systems research, Susquehanna, Point72, Citadel, Asymptote Capital, Instalily, Samsung Research; plus staffing/body-shops BeaconFire, Antra, Wipro, Itlize"}}

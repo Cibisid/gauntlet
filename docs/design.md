@@ -18,8 +18,6 @@ Teams ship LLM features by editing prompts, swapping models and adding tools. Ea
 - **Rollouts are all-or-nothing.** A bad change reaches 100% of traffic before anyone notices.
 - **Cost and latency are invisible** until the bill or the complaints arrive.
 
-The 2026 job postings I analysed (1,402 career-board descriptions and 63 hand-read ones; see `docs/market-evidence.md`) ask for exactly these capabilities: evaluation and quality gates, guardrails, observability, cost and latency control, and CI/CD for model and prompt changes.
-
 ## 2. Goals and non-goals
 
 **Goals**
@@ -176,21 +174,7 @@ Guard rails on spend:
 - **CI/CD (GitHub Actions).**
   - Pipeline: lint → unit → integration → security scans → build and sign image → gate (if releases changed) → deploy to staging → end-to-end → manual approval → production.
 
-## 11. Milestones
-
-See `docs/plan.md`. The summary, about 14 weeks:
-
-| Weeks | Milestone |
-|---|---|
-| 1–2 | Eval core (statistics, case schema, runner), CI, local stack |
-| 3–4 | Judges plus labeling, κ measured on ≥ 200 labels for 2 rubrics |
-| 5–6 | Gate in PRs with the TrialBridge suite; first real gate reports |
-| 7–8 | Guardrails plus OWASP security packs; attack-rate benchmarks |
-| 9–10 | Canary rollout controller, auto-rollback, observability, alerts |
-| 11–12 | vLLM backend, cost/latency benchmarks, cost-aware routing |
-| 13–14 | Terraform on AWS, DAST, security report, write-up and demo video |
-
-## 12. Risks
+## 11. Risks
 
 | Risk | Mitigation |
 |---|---|
@@ -200,6 +184,6 @@ See `docs/plan.md`. The summary, about 14 weeks:
 | Scope creep | Non-goals are enforced; any new feature needs an ADR |
 | Gate overfitting | Dev/holdout split; holdout refreshed from production failures |
 
-## 13. Open questions
+## 12. Open questions
 - EKS versus k3s on EC2 for the demo cluster: cost against realism (ADR-0003, proposed).
 - Which open-weight model for vLLM, given TrialBridge task quality and a single L4 or A10G GPU.
