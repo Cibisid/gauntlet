@@ -2,6 +2,10 @@
 
 [![ci](https://github.com/Cibisid/gauntlet/actions/workflows/ci.yml/badge.svg)](https://github.com/Cibisid/gauntlet/actions/workflows/ci.yml)
 
+**[Try the live demo](https://cibisid.github.io/#demo-gauntlet)** · **[Read the case study](https://cibisid.github.io/projects/gauntlet.html)** · Built by [Cibi Siddarth](https://cibisid.github.io)
+
+> **In one sentence:** a safety check that stops a bad AI update before customers see it, and undoes a release on its own if problems show up with real traffic.
+
 **Eval-gated releases for LLM and agent systems.** Gauntlet treats prompts, models and guardrails like code. Every change is versioned and tested offline against a held-out case set, security packs and budgets. It then ships through a canary that rolls itself back when live traffic shows a problem.
 
 ```
@@ -22,7 +26,7 @@
 | **Rollout** | Canary controller: advance, hold, promote, or automatic rollback |
 | **Monitoring** | Grafana dashboard, 7 Prometheus alerts with runbooks, PSI drift, failure → test-case triage |
 | **Deploy** | Hardened Docker image, Compose stack, Kubernetes manifests (restricted PSS, NetworkPolicies), vLLM GPU manifest, Terraform for AWS |
-| **CI** | Lint, strict types, 129 tests at about 98% coverage, release gate, kind-cluster canary end-to-end, OWASP ZAP DAST, Bandit, Semgrep, gitleaks, pip-audit, SBOM, Trivy, checkov, terraform validate |
+| **CI** | Lint, strict types, 137 tests at about 98% coverage, release gate, kind-cluster canary end-to-end, OWASP ZAP DAST, Bandit, Semgrep, gitleaks, pip-audit, SBOM, Trivy, checkov, terraform validate |
 
 ## Results (measured; details in [docs/results.md](docs/results.md))
 - **Gate verdicts on the demo releases:**
