@@ -11,6 +11,9 @@ RUN pip install --no-cache-dir --upgrade pip build && python -m build --wheel --
 
 FROM python:3.12-slim AS runtime
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 GAUNTLET_STATE_DIR=/var/lib/gauntlet
+# Apply Debian security updates the base image hasn't picked up yet: Trivy fails CI on any
+# HIGH/CRITICAL CVE that has a fix (zlib1g CVE-2026-76844 / CVE-2026-85091 first tripped this).
+RUN apt-get update && apt-get upgrade -y --no-install-recommends && rm -rf /var/lib/apt/lists/*
 RUN groupadd --system --gid 10001 app && useradd --system --uid 10001 --gid app --home-dir /app app \
  && mkdir -p /var/lib/gauntlet && chown app:app /var/lib/gauntlet
 WORKDIR /app
